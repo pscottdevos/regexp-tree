@@ -40,7 +40,6 @@ function astTraverse(root, options = {}) {
     }
 
     if (res !== false) {
-
       // A node can be replaced during traversal, so we have to
       // recalculate it from the parent, to avoid traversing "dead" nodes.
       if (parent && parent[prop]) {
@@ -51,45 +50,41 @@ function astTraverse(root, options = {}) {
         }
       }
 
-      for (let prop in node) if (node.hasOwnProperty(prop)) {
-        if (skipProperty ? skipProperty(prop, node) : prop[0] === '$') {
-          continue;
-        }
-
-        const child = node[prop];
-
-        // Collection node.
-        //
-        // NOTE: a node (or several nodes) can be removed or inserted
-        // during traversal.
-        //
-        // Current traversing index is stored on top of the
-        // `NodePath.traversingIndexStack`. The stack is used to support
-        // recursive nature of the traversal.
-        //
-        // In this case `NodePath.traversingIndex` (which we use here) is
-        // updated in the NodePath remove/insert methods.
-        //
-        if (Array.isArray(child)) {
-          let index = 0;
-          NodePath.traversingIndexStack.push(index);
-          while (index < child.length) {
-            visit(
-              child[index],
-              node,
-              prop,
-              index
-            );
-            index = NodePath.updateTraversingIndex(+1);
+      for (let prop in node)
+        if (node.hasOwnProperty(prop)) {
+          if (skipProperty ? skipProperty(prop, node) : prop[0] === '$') {
+            continue;
           }
-          NodePath.traversingIndexStack.pop();
-        }
 
-        // Simple node.
-        else {
-          visit(child, node, prop);
+          const child = node[prop];
+
+          // Collection node.
+          //
+          // NOTE: a node (or several nodes) can be removed or inserted
+          // during traversal.
+          //
+          // Current traversing index is stored on top of the
+          // `NodePath.traversingIndexStack`. The stack is used to support
+          // recursive nature of the traversal.
+          //
+          // In this case `NodePath.traversingIndex` (which we use here) is
+          // updated in the NodePath remove/insert methods.
+          //
+          if (Array.isArray(child)) {
+            let index = 0;
+            NodePath.traversingIndexStack.push(index);
+            while (index < child.length) {
+              visit(child[index], node, prop, index);
+              index = NodePath.updateTraversingIndex(+1);
+            }
+            NodePath.traversingIndexStack.pop();
+          }
+
+          // Simple node.
+          else {
+            visit(child, node, prop);
+          }
         }
-      }
     }
 
     if (post) {
@@ -138,7 +133,6 @@ module.exports = {
    * them in one AST traversal pass.
    */
   traverse(ast, handlers, options = {asNodes: false}) {
-
     if (!Array.isArray(handlers)) {
       handlers = [handlers];
     }
@@ -160,14 +154,40 @@ module.exports = {
       }
     });
 
+    function callHandler(handler, handlerName, node, parent, prop, index, pos) {
+      let nodePath;
+      if (!options.asNodes) {
+        nodePath = getPathFor(node, parent, prop, index);
+      }
+      let handlerFuncPre;
+      if (typeof handler[handlerName] === 'function') {
+        handlerFuncPre = handler[handlerName];
+      } else if (
+        typeof handler[handlerName] === 'object' &&
+        typeof handler[handlerName][pos] === 'function'
+      ) {
+        handlerFuncPre = handler[handlerName][pos];
+      }
+
+      if (handlerFuncPre) {
+        if (nodePath) {
+          // A path/node can be removed by some previous handler.
+          if (!nodePath.isRemoved()) {
+            const handlerResult = handlerFuncPre.call(handler, nodePath);
+            // Explicitly stop traversal.
+            if (handlerResult === false) {
+              return false;
+            }
+          }
+        } else {
+          handlerFuncPre.call(handler, node, parent, prop, index);
+        }
+      }
+    }
+
     function getPathFor(node, parent, prop, index) {
       const parentPath = NodePath.getForNode(parent);
-      const nodePath = NodePath.getForNode(
-        node,
-        parentPath,
-        prop,
-        index
-      );
+      const nodePath = NodePath.getForNode(node, parentPath, prop, index);
 
       return nodePath;
     }
@@ -178,55 +198,32 @@ module.exports = {
        * Handler on node enter.
        */
       pre(node, parent, prop, index) {
-        let nodePath;
-        if (!options.asNodes) {
-          nodePath = getPathFor(node, parent, prop, index);
-        }
-
         for (const handler of handlers) {
-          // "Catch-all" `*` handler.
-          if (typeof handler['*'] === 'function') {
-            if (nodePath) {
-              // A path/node can be removed by some previous handler.
-              if (!nodePath.isRemoved()) {
-                const handlerResult = handler['*'](nodePath);
-                // Explicitly stop traversal.
-                if (handlerResult === false) {
-                  return false;
-                }
-              }
-            } else {
-              handler['*'](node, parent, prop, index);
-            }
+          let handlerResult = callHandler(
+            handler,
+            '*',
+            node,
+            parent,
+            prop,
+            index,
+            'pre'
+          );
+          if (handlerResult === false) {
+            return false;
           }
-
-          // Per-node handler.
-          let handlerFuncPre;
-          if (typeof handler[node.type] === 'function') {
-            handlerFuncPre = handler[node.type];
-          } else if (
-            typeof handler[node.type] === 'object' &&
-            typeof handler[node.type].pre === 'function'
-          ) {
-            handlerFuncPre = handler[node.type].pre;
-          }
-
-          if (handlerFuncPre) {
-            if (nodePath) {
-              // A path/node can be removed by some previous handler.
-              if (!nodePath.isRemoved()) {
-                const handlerResult = handlerFuncPre.call(handler, nodePath);
-                // Explicitly stop traversal.
-                if (handlerResult === false) {
-                  return false;
-                }
-              }
-            } else {
-              handlerFuncPre.call(handler, node, parent, prop, index);
-            }
+          handlerResult = callHandler(
+            handler,
+            node.type,
+            node,
+            parent,
+            prop,
+            index,
+            'pre'
+          );
+          if (handlerResult === false) {
+            return false;
           }
         } // Loop over handlers
-
       }, // pre func
 
       /**
