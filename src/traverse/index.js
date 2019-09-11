@@ -159,28 +159,31 @@ module.exports = {
       if (!options.asNodes) {
         nodePath = getPathFor(node, parent, prop, index);
       }
-      let handlerFuncPre;
+      let handlerFunc;
       if (typeof handler[handlerName] === 'function') {
-        handlerFuncPre = handler[handlerName];
+        if (pos === 'post') {
+          return;
+        }
+        handlerFunc = handler[handlerName];
       } else if (
         typeof handler[handlerName] === 'object' &&
         typeof handler[handlerName][pos] === 'function'
       ) {
-        handlerFuncPre = handler[handlerName][pos];
+        handlerFunc = handler[handlerName][pos];
       }
 
-      if (handlerFuncPre) {
+      if (handlerFunc) {
         if (nodePath) {
           // A path/node can be removed by some previous handler.
           if (!nodePath.isRemoved()) {
-            const handlerResult = handlerFuncPre.call(handler, nodePath);
+            const handlerResult = handlerFunc.call(handler, nodePath);
             // Explicitly stop traversal.
             if (handlerResult === false) {
               return false;
             }
           }
         } else {
-          handlerFuncPre.call(handler, node, parent, prop, index);
+          handlerFunc.call(handler, node, parent, prop, index);
         }
       }
     }
@@ -199,6 +202,7 @@ module.exports = {
        */
       pre(node, parent, prop, index) {
         for (const handler of handlers) {
+          // "Catch-all" `*` handler.
           let handlerResult = callHandler(
             handler,
             '*',
@@ -211,6 +215,7 @@ module.exports = {
           if (handlerResult === false) {
             return false;
           }
+          // Per-node handler.
           handlerResult = callHandler(
             handler,
             node.type,
@@ -234,34 +239,32 @@ module.exports = {
           return;
         }
 
-        let nodePath;
-        if (!options.asNodes) {
-          nodePath = getPathFor(node, parent, prop, index);
-        }
-
         for (const handler of handlers) {
-          // Per-node handler.
-          let handlerFuncPost;
-          if (
-            typeof handler[node.type] === 'object' &&
-            typeof handler[node.type].post === 'function'
-          ) {
-            handlerFuncPost = handler[node.type].post;
+          // "Catch-all" `*` handler.
+          let handlerResult = callHandler(
+            handler,
+            '*',
+            node,
+            parent,
+            prop,
+            index,
+            'post'
+          );
+          if (handlerResult === false) {
+            return false;
           }
-
-          if (handlerFuncPost) {
-            if (nodePath) {
-              // A path/node can be removed by some previous handler.
-              if (!nodePath.isRemoved()) {
-                const handlerResult = handlerFuncPost.call(handler, nodePath);
-                // Explicitly stop traversal.
-                if (handlerResult === false) {
-                  return false;
-                }
-              }
-            } else {
-              handlerFuncPost.call(handler, node, parent, prop, index);
-            }
+          // Per-node handler.
+          handlerResult = callHandler(
+            handler,
+            node.type,
+            node,
+            parent,
+            prop,
+            index,
+            'post'
+          );
+          if (handlerResult === false) {
+            return false;
           }
         } // Loop over handlers
       }, // post func
